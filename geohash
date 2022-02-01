@@ -1,0 +1,113 @@
+# Inspired by: https://yatmanwong.medium.com/geohash-implementation-explained-2ed9627a61ff
+#!/bin/sh
+true + /; exec awk --bignum -f "$0" $@; exit; / {}
+
+
+function _spaceout(a, res)
+{
+    # turn 01101... into 0010100010...
+    # from https://stackoverflow.com/a/58980803
+    # see also: https://graphics.stanford.edu/~seander/bithacks.html#InterleaveBMN
+    res = and(a,                       0x00000000ffffffff)
+    res = and(or(res, lshift(res,16)), 0x0000ffff0000ffff)
+    res = and(or(res, lshift(res, 8)), 0x00ff00ff00ff00ff)
+    res = and(or(res, lshift(res, 4)), 0x0f0f0f0f0f0f0f0f)
+    res = and(or(res, lshift(res, 2)), 0x3333333333333333)
+    res = and(or(res, lshift(res, 1)), 0x5555555555555555)
+    return res
+}
+
+
+function _odd_bits(a, res)
+{
+    # take only odd bits
+    res = and(a,                       0x5555555555555555)
+    res = and(or(res, rshift(res, 1)), 0x3333333333333333)
+    res = and(or(res, rshift(res, 2)), 0x0f0f0f0f0f0f0f0f)
+    res = and(or(res, rshift(res, 4)), 0x00ff00ff00ff00ff)
+    res = and(or(res, rshift(res, 8)), 0x0000ffff0000ffff)
+    res = and(or(res, rshift(res,16)), 0x00000000ffffffff)
+    return res
+}
+
+
+function _interleave(a, b)
+{
+    # turn a=110..., b=010... into 011100
+    return or(lshift(_spaceout(b), 1), _spaceout(a))
+}
+
+
+function _base32encode(x, res)
+{
+    # encode integer with base32 geohash encoding
+    # iterate 5 bits at a time
+    for (i=0; i<precision; ++i)
+        res = sprintf("%s%s",res,_32ENC[and(rshift(x, 57-i*5), 31)])
+    return res
+}
+
+
+function _base32decode(x, res, chars, M)
+{
+    # decode base32 geohash to an integer
+    split(x,chars,"")
+    M = length(chars) > 12 ? 12 : length(chars)
+    for (i=0; i<M; ++i)
+        res = or(lshift(_32DEC[chars[i+1]], 57-i*5), res)
+    return res
+}
+
+
+function geohash_encode(lat, lon)
+{
+    return _base32encode(                                               \
+        _interleave(                                                    \
+            and(int((lat +  90) / 180.0 * 0x80000000), 0x7fffffff),     \
+            and(int((lon + 180) / 360.0 * 0x80000000), 0x7fffffff)))
+}
+
+
+function geohash_decode(geohash, x)
+{
+    x = _base32decode(geohash)
+    return sprintf(                                                     \
+        "%.16f%s%.16f",                                                 \
+        (and(_odd_bits(x), 0x7fffffff) / 0x80000000)*180 - 90,          \
+        FS,                                                             \
+        (and(_odd_bits(rshift(x, 1)), 0x7fffffff) / 0x80000000)*360 - 180)
+}
+
+
+BEGIN {
+    # set up lookup tables for base32
+    for (i=0; i<32; ++i) {
+        if (i < 10)
+            _32ENC[i] = i
+        else if (i < 17)
+            _32ENC[i] = sprintf("%c", i + 88)
+        else if (i < 19)
+            _32ENC[i] = sprintf("%c", i + 89)
+        else if (i < 21)
+            _32ENC[i] = sprintf("%c", i + 90)
+        else
+            _32ENC[i] = sprintf("%c", i + 91)
+        _32DEC[_32ENC[i]] = i
+    }
+
+    if (precision > 12 || precision < 1)
+        precision = 12
+}
+
+
+{
+    res=$0
+
+    if ("" != lat && "" != lon)
+        res = res FS geohash_encode($lat, $lon)
+
+    if ("" != geohash)
+        res = res FS geohash_decode($geohash)
+
+    print res
+}
